@@ -1,0 +1,119 @@
+/*
+ * timer_ctrl.c
+ *
+ *  Created on: Jan 10, 2024
+ *      Author: catsa
+ */
+
+#include "main.h"
+#include "cmsis_os.h"
+#include "apps.h"
+#include "uart_proc.h"
+#include "timer_ctrl.h"
+
+PWM_Timer nPWMTimer[MAX_PWM_CH] = {0,};
+
+GPIO_TypeDef *gpio_port[MAX_PWM_CH] = {CH1_OUT_GPIO_Port, CH2_OUT_GPIO_Port, CH3_OUT_GPIO_Port, CH4_OUT_GPIO_Port};
+uint16_t gpio_pin[MAX_PWM_CH] = {CH1_OUT_Pin, CH2_OUT_Pin, CH3_OUT_Pin, CH4_OUT_Pin};
+void timer_ctrl_callback(void)
+{
+	uint8_t timer_idx;
+
+	for(timer_idx = 0; timer_idx < MAX_PWM_CH; timer_idx++){
+		if(nPWMTimer[timer_idx].nDelay > 10){
+				nPWMTimer[timer_idx].nDelay-=10;
+		}else if(nPWMTimer[timer_idx].nDelay <= 0){
+			if(nPWMTimer[timer_idx].gpio_set == 0){
+				Printf("Timer[%x] cnt[%d] PLUSE[%d]\r\n", timer_idx, nPWMTimer[timer_idx].nPluse);
+				HAL_GPIO_WritePin(gpio_port[timer_idx], gpio_pin[timer_idx], GPIO_PIN_SET);
+				nPWMTimer[timer_idx].gpio_set = 1;
+			}
+			if(nPWMTimer[timer_idx].nPluse > 10){
+				Printf("Timer[%x] cnt[%d] PLUSE[%d]\r\n", timer_idx, nPWMTimer[timer_idx].nPluse);
+				nPWMTimer[timer_idx].nPluse-=10;
+			}else{
+				HAL_GPIO_WritePin(gpio_port[timer_idx], gpio_pin[timer_idx], GPIO_PIN_RESET);
+				nPWMTimer[timer_idx].gpio_set = 0;
+			}
+		}
+	}
+}
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+	return ;
+}
+
+void timerctrl_proc(void)
+{
+	int i;
+
+	while(1)
+	{
+		for(i = 0; i < MAX_PWM_CH; i++){
+			if(nPWMTimer[i].rcv_evt){
+				Printf("Event[%d]\r\n", i);
+				nPWMTimer[i].rcv_evt = 0;
+				nPWMTimer[i].nDelay = Device.nDELAY[i];
+				nPWMTimer[i].nPluse = Device.nPULSE[i];
+			}
+		}
+
+		osDelay(1);
+	}
+
+}
+
+void PWM_OUT(int channel, int data)
+{
+	TIM_OC_InitTypeDef sConfigOC_;
+	uint32_t tim_ch[MAX_PWM_CH]={TIM_CHANNEL_1, TIM_CHANNEL_2, TIM_CHANNEL_3, TIM_CHANNEL_4};
+
+	sConfigOC_.Pulse = (uint32_t)data;
+
+	HAL_TIM_PWM_Stop(&htim2, tim_ch[channel]);
+	HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC_, tim_ch[channel]);
+	HAL_TIM_PWM_Start(&htim2, tim_ch[channel]);
+
+	if (channel == 0){
+		if ((Device.nDeviceCurrentStatus >= LCD_STATUS_MODE_LOCAL) && (Device.nDeviceCurrentStatus <= LCD_STATUS_MODE_EXT)){
+			if (data == 0) DataSend2(SENSING_LED, 10);
+			else DataSend2(SENSING_LED, 11);
+		}
+	}
+}
+
+void pwm_timer_disable(void)
+{
+	uint32_t tim_ch[MAX_PWM_CH]={TIM_CHANNEL_1, TIM_CHANNEL_2, TIM_CHANNEL_3, TIM_CHANNEL_4};
+	for(int i = 0; i < MAX_PWM_CH; i++){
+		HAL_TIM_PWM_Stop(&htim2, tim_ch[i]);
+	}
+	HAL_TIM_PWM_DeInit(&htim2);
+}
+
+void set_gpio_out_port(void)
+{
+	for(int i = 0; i < MAX_PWM_CH; i++){
+		HAL_GPIO_WritePin(gpio_port[i], gpio_pin[i], GPIO_PIN_RESET);
+	}
+
+	GPIO_InitTypeDef GPIO_InitStruct = {0};
+	GPIO_InitStruct.Pin = CH1_OUT_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	HAL_GPIO_Init(CH1_OUT_GPIO_Port, &GPIO_InitStruct);
+
+	GPIO_InitStruct.Pin = CH2_OUT_Pin | CH3_OUT_Pin | CH4_OUT_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	HAL_GPIO_Init(CH2_OUT_GPIO_Port, &GPIO_InitStruct);
+}
+
+void strobe_timer_init(void)
+{
+	set_gpio_out_port();
+	HAL_TIM_Base_Start_IT(&htim1);
+}
